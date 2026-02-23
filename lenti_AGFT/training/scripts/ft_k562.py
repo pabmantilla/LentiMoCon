@@ -199,26 +199,51 @@ def make_summary_figure(results_dir, test_targets, test_preds, history=None):
     return best_r, best_rho, best_mse
 
 
-def update_model_club(model_name, test_pearson, results_dir):
+def update_model_club(model_name, test_pearson, results_dir, config_path=None,
+                      spearman_rho=None, mse=None):
     """Update pearson's model club CSV; copy summary if new best."""
     CLUB_DIR.mkdir(parents=True, exist_ok=True)
     csv_path = CLUB_DIR / 'best_models.csv'
+
+    # Build short hyperparams description
+    hp_str = ''
+    if config_path:
+        with open(config_path) as f:
+            cfg = json.load(f)
+        m = cfg.get('model', {})
+        t = cfg.get('training', {})
+        ts = cfg.get('two_stage', {})
+        parts = [
+            f"pool={m.get('pooling_type','?')}",
+            f"nl={m.get('nl_size','?')}",
+            f"do={m.get('do','?')}",
+            f"act={m.get('activation','?')}",
+            f"lr={t.get('learning_rate','?')}",
+            f"opt={t.get('optimizer','?')}",
+            f"wd={t.get('weight_decay','?')}",
+        ]
+        if ts.get('enabled'):
+            parts.append(f"s2_lr={ts.get('second_stage_lr','?')}")
+        hp_str = ' | '.join(parts)
 
     rows = []
     if csv_path.exists():
         with open(csv_path, 'r') as f:
             rows = list(csv.DictReader(f))
 
-    current_best = max((float(r['test_pearson']) for r in rows), default=-999)
+    current_best = max((float(r['pearson_r']) for r in rows), default=-999)
 
     rows.append({
-        'model_name': model_name,
-        'test_pearson': f'{test_pearson:.6f}',
-        'results_dir': str(results_dir),
+        'name': model_name,
+        'pearson_r': f'{test_pearson:.6f}',
+        'spearman_rho': f'{spearman_rho:.6f}' if spearman_rho is not None else '',
+        'mse': f'{mse:.6f}' if mse is not None else '',
+        'cell_type': 'K562',
+        'hyperparams': hp_str,
         'timestamp': datetime.now().isoformat(),
     })
     with open(csv_path, 'w', newline='') as f:
-        w = csv.DictWriter(f, fieldnames=['model_name', 'test_pearson', 'results_dir', 'timestamp'])
+        w = csv.DictWriter(f, fieldnames=['name', 'pearson_r', 'spearman_rho', 'mse', 'cell_type', 'hyperparams', 'timestamp'])
         w.writeheader()
         w.writerows(rows)
 
@@ -264,6 +289,11 @@ def main():
     ]
     if weights_path.exists() and '--base_checkpoint_path' not in passthrough:
         cmd += ['--base_checkpoint_path', str(weights_path)]
+    # Auto-resume stage2 if checkpoint exists from a previous run
+    stage2_ckpt = checkpoint_dir / 'K562' / model_name / 'stage2'
+    if stage2_ckpt.exists() and '--resume_from_stage2' not in passthrough:
+        print(f"Found existing stage2 checkpoint, resuming...")
+        cmd += ['--resume_from_stage2']
     if config_path:
         cmd += ['--config', config_path]
     cmd += passthrough
@@ -352,7 +382,8 @@ def main():
     print(f"Saved: {results_dir / 'metrics.json'}")
 
     # Update pearson's model club
-    update_model_club(model_name, test_r, results_dir)
+    update_model_club(model_name, test_r, results_dir, config_path,
+                      spearman_rho=test_rho, mse=test_mse)
 
     print("\n" + "=" * 60)
     print(f"Done! Results in: {results_dir}")

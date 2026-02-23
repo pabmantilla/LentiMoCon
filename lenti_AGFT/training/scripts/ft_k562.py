@@ -8,9 +8,29 @@ Runs finetune_mpra.py for training (all logic preserved there), then:
   - Updates pearson's model club (best model tracker)
 
 Usage:
-  python ft_k562.py --name my_model [any finetune_mpra.py flags]
-  python ft_k562.py --name my_model --config ../../configs/mpra_K562.json
+  python ft_k562.py --name my_model
   python ft_k562.py --name my_model --learning_rate 5e-4 --num_epochs 30
+  python ft_k562.py --name my_model --config path/to/other_config.json
+
+Defaults from configs/mpra_K562.json. Override with passthrough flags:
+  --learning_rate FLOAT     Learning rate (default: 1e-3)
+  --num_epochs INT          Max epochs (default: 100)
+  --batch_size INT          Batch size (default: 32)
+  --early_stopping_patience INT  Patience (default: 5)
+  --pooling_type STR        sum|mean|max|center|flatten (default: flatten)
+  --center_bp INT           Center window bp (default: 256)
+  --nl_size STR             Hidden sizes, e.g. "1024" or "512,256" (default: 1024)
+  --do FLOAT                Dropout rate (default: 0.1)
+  --activation STR          relu|gelu (default: relu)
+  --optimizer STR           adam|adamw (default: adam)
+  --weight_decay FLOAT      L2 reg (default: 1e-6)
+  --gradient_clip FLOAT     Max gradient norm (default: None)
+  --lr_scheduler STR        plateau|cosine (default: None)
+  --second_stage_lr FLOAT   Stage 2 LR, enables two-stage (default: 1e-5)
+  --second_stage_epochs INT Stage 2 epochs (default: 50)
+  --no_wandb                Disable wandb logging
+  --no_freeze_backbone      Train full model (not just head)
+  --base_checkpoint_path STR  Custom AlphaGenome weights path
 """
 
 import sys
@@ -220,11 +240,12 @@ def main():
     # Parse --name and --config; pass everything else through to finetune_mpra.py
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument('--name', type=str, required=True, help='Model name for results dir')
-    pre_parser.add_argument('--config', type=str, default=None)
+    pre_parser.add_argument('--config', type=str,
+                            default=str(AGFT_DIR / 'configs' / 'mpra_K562.json'))
     pre_args, passthrough = pre_parser.parse_known_args()
 
     model_name = pre_args.name
-    config_path = pre_args.config
+    config_path = str(Path(pre_args.config).resolve()) if pre_args.config else None
     results_dir = RESULTS_BASE / model_name
     results_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = results_dir / 'checkpoints'
@@ -255,7 +276,7 @@ def main():
 
     env = {**__import__('os').environ, 'PYTHONUNBUFFERED': '1'}
     env['PYTHONPATH'] = str(AGFT_DIR) + ':' + env.get('PYTHONPATH', '')
-    result = subprocess.run(cmd, cwd=str(AGFT_DIR), env=env)
+    result = subprocess.run(cmd, cwd=str(PROJ_DIR), env=env)
     if result.returncode != 0:
         print(f"ERROR: finetune_mpra.py exited with code {result.returncode}")
         sys.exit(result.returncode)

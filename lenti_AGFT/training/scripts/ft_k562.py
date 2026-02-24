@@ -275,6 +275,22 @@ def main():
     results_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = results_dir / 'checkpoints'
 
+    # Persist args so resubmits with just --name recover the original flags
+    args_file = results_dir / 'args.json'
+    if passthrough or not args_file.exists():
+        # First run or explicit new args — save them
+        import json as _json
+        _json.dump({'config': pre_args.config, 'passthrough': passthrough},
+                   open(args_file, 'w'))
+    else:
+        # Resubmit with just --name — reload saved args
+        import json as _json
+        saved = _json.load(open(args_file))
+        passthrough = saved.get('passthrough', [])
+        if saved.get('config'):
+            config_path = str(Path(saved['config']).resolve())
+        print(f"Loaded saved args from {args_file}: {passthrough}")
+
     # ---- Step 1: Run finetune_mpra.py ----
     finetune_script = AGFT_DIR / 'scripts' / 'finetune_mpra.py'
     # Use local weights if available (avoids Kaggle prompt)

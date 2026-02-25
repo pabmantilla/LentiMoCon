@@ -467,12 +467,34 @@ def update_model_club(name, metrics_best, preds_best, targets_best, hp):
 
 def main():
     args = parse_args()
-    hp = load_config(args.config, DEFAULTS)
-    apply_cli_overrides(hp, args)
-    use_cache = args.cache_embeddings
 
     results_dir = RESULTS_BASE / args.name
     results_dir.mkdir(parents=True, exist_ok=True)
+
+    # Persist args so resubmits with just --name recover original flags
+    args_file = results_dir / "args.json"
+    has_cli_overrides = any([
+        args.config, args.cache_embeddings, args.lr, args.weight_decay,
+        args.batch_size, args.epochs, args.patience, args.nl_size,
+        args.dropout, args.activation, args.pooling_type, args.center_bp,
+        args.no_reverse_complement, args.no_random_shift,
+    ])
+    if has_cli_overrides or not args_file.exists():
+        # First run or explicit new args — build hp and save
+        hp = load_config(args.config, DEFAULTS)
+        apply_cli_overrides(hp, args)
+        use_cache = args.cache_embeddings
+        saved = {"hp": hp, "config": args.config, "cache_embeddings": use_cache}
+        with open(args_file, "w") as f:
+            json.dump(saved, f, indent=2)
+    else:
+        # Resubmit with just --name — reload saved args
+        with open(args_file) as f:
+            saved = json.load(f)
+        hp = saved["hp"]
+        use_cache = saved.get("cache_embeddings", False)
+        print(f"Loaded saved args from {args_file}")
+
     checkpoint_dir = results_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 

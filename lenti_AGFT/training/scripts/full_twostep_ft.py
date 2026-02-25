@@ -457,7 +457,7 @@ def update_model_club(name, metrics_best, preds_best, targets_best, hp):
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     })
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
     if new_r > current_best:
@@ -825,13 +825,11 @@ def main():
             model.load_checkpoint(str(s1_ckpt))
             print(f"Loaded stage 1 best checkpoint from {s1_ckpt}")
 
-        # Unfreeze backbone
-        model.unfreeze_parameters(
-            unfreeze_prefixes=['sequence_encoder', 'transformer_tower', 'sequence_decoder']
-        )
-        print("Unfroze backbone parameters")
+        # Unfreeze encoder (same as alphagenome_FT_MPRA/src/training.py stage 2)
+        model.unfreeze_parameters(unfreeze_prefixes=['sequence_encoder'])
+        print("Unfroze sequence_encoder parameters")
 
-        # New optimizer for all params (heads_only=False -> plain adamw on everything)
+        # New optimizer for stage 2 — adamw on all params at lower LR
         s2_optimizer = create_optimizer(
             model._params, trainable_head_names=[HEAD_NAME],
             learning_rate=hp["stage2_lr"], weight_decay=hp["weight_decay"],

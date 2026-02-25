@@ -442,7 +442,7 @@ def update_model_club(name, metrics_best, preds_best, targets_best, hp):
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     })
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
     if new_r > current_best:

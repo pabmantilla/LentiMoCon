@@ -727,6 +727,7 @@ def main():
     best_epoch = 0
     best_preds = None
     best_targets = None
+    best_params = None
     epoch1_preds = None
     epoch1_targets = None
     train_loss_history = []
@@ -765,6 +766,7 @@ def main():
                 epochs_no_improve = 0
                 best_epoch = epoch
                 best_preds, best_targets = collect_preds(test_loader)
+                best_params = copy.deepcopy(model._params)
                 model.save_checkpoint(
                     str(checkpoint_dir / "best"), save_full_model=False,
                 )
@@ -819,11 +821,10 @@ def main():
         print(f"  Epochs={hp['stage2_epochs']}, Patience={hp['stage2_patience']}")
         print(f"{'='*60}")
 
-        # Reload best stage 1 checkpoint
-        s1_ckpt = checkpoint_dir / "best"
-        if s1_ckpt.exists():
-            model.load_checkpoint(str(s1_ckpt))
-            print(f"Loaded stage 1 best checkpoint from {s1_ckpt}")
+        # Restore best stage 1 params
+        if best_params is not None:
+            model._params = best_params
+            print(f"Restored best stage 1 params (epoch {best_epoch})")
 
         # Unfreeze encoder (same as alphagenome_FT_MPRA/src/training.py stage 2)
         model.unfreeze_parameters(unfreeze_prefixes=['sequence_encoder'])

@@ -439,6 +439,71 @@ def make_summary_figure(
     print(f"Summary figure saved to {save_path}")
 
 
+def make_combined_summary(
+    epoch1_preds, epoch1_targets,
+    final_preds, final_targets, final_metrics,
+    s1_train_loss, s1_valid_loss, s1_best_epoch,
+    s2_train_loss, s2_valid_loss, s2_best_epoch,
+    save_path, run_name,
+):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(17, 5))
+
+    # Shared axis limits for scatter plots
+    all_vals = [final_targets, final_preds]
+    if epoch1_preds is not None:
+        all_vals.append(epoch1_preds)
+    vmin = min(v.min() for v in all_vals)
+    vmax = max(v.max() for v in all_vals)
+    lims = [vmin, vmax]
+
+    # Panel 1: Epoch 1 scatter
+    if epoch1_preds is not None:
+        m1 = compute_metrics(epoch1_preds, epoch1_targets)
+        axes[0].scatter(epoch1_targets, epoch1_preds, alpha=0.1, s=1, rasterized=True)
+        axes[0].plot(lims, lims, "r--", linewidth=0.5)
+        axes[0].set_title(f"Epoch 1: r={m1['pearson_r']:.3f}, rho={m1['spearman_rho']:.3f}")
+    else:
+        axes[0].set_title("Epoch 1: N/A")
+    axes[0].set_xlabel("Actual"); axes[0].set_ylabel("Predicted")
+    axes[0].set_xlim(lims); axes[0].set_ylim(lims)
+
+    # Panel 2: Best epoch scatter
+    axes[1].scatter(final_targets, final_preds, alpha=0.1, s=1, rasterized=True)
+    axes[1].plot(lims, lims, "r--", linewidth=0.5)
+    axes[1].set_xlabel("Actual"); axes[1].set_ylabel("Predicted")
+    best_label = f"S2 ep {s2_best_epoch}" if s2_train_loss else f"S1 ep {s1_best_epoch}"
+    axes[1].set_title(f"Best ({best_label}): r={final_metrics['pearson_r']:.3f}, rho={final_metrics['spearman_rho']:.3f}")
+    axes[1].set_xlim(lims); axes[1].set_ylim(lims)
+
+    # Panel 3: Combined loss curves
+    n_s1 = len(s1_train_loss)
+    s1_epochs = list(range(1, n_s1 + 1))
+    axes[2].plot(s1_epochs, s1_train_loss, color="tab:blue", label="S1 Train")
+    axes[2].plot(s1_epochs, s1_valid_loss, color="tab:orange", label="S1 Valid")
+
+    if s2_train_loss:
+        s2_epochs = list(range(n_s1 + 1, n_s1 + len(s2_train_loss) + 1))
+        axes[2].plot(s2_epochs, s2_train_loss, color="tab:blue", linestyle="--", label="S2 Train")
+        axes[2].plot(s2_epochs, s2_valid_loss, color="tab:orange", linestyle="--", label="S2 Valid")
+        unfreeze_x = n_s1 + 0.5
+        axes[2].axvline(unfreeze_x, color="red", linestyle="-", alpha=0.7, label="Unfreeze")
+        axes[2].axvline(n_s1 + s2_best_epoch, color="green", linestyle=":", alpha=0.7, label=f"S2 best (ep {s2_best_epoch})")
+
+    axes[2].axvline(s1_best_epoch, color="gray", linestyle=":", alpha=0.7, label=f"S1 best (ep {s1_best_epoch})")
+    axes[2].set_xlabel("Epoch"); axes[2].set_ylabel("Loss (MSE)")
+    axes[2].set_title("Training Loss"); axes[2].legend(fontsize=8)
+
+    plt.suptitle(f"AlphaGenome FT -> LentiMPRA K562 [{run_name}]", fontsize=13)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Combined summary saved to {save_path}")
+
+
 def update_model_club(name, metrics_best, preds_best, targets_best, hp):
     MODEL_CLUB_DIR.mkdir(parents=True, exist_ok=True)
     csv_path = MODEL_CLUB_DIR / "best_models.csv"
@@ -948,6 +1013,14 @@ def main():
     with open(results_dir / "metrics.json", "w") as f:
         json.dump(metrics_out, f, indent=2)
     print(f"Metrics saved to {results_dir / 'metrics.json'}")
+
+    make_combined_summary(
+        epoch1_preds, epoch1_targets,
+        final_preds, final_targets, final_metrics,
+        train_loss_history, valid_loss_history, best_epoch,
+        s2_train_loss_history, s2_valid_loss_history, s2_best_epoch,
+        results_dir / "summary_combined.png", args.name,
+    )
 
     update_model_club(args.name, final_metrics, final_preds, final_targets, hp)
     print("\nDone!")

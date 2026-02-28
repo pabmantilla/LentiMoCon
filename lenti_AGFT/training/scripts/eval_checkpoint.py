@@ -76,8 +76,10 @@ def main():
     print(f"Loaded checkpoint: {ckpt_dir}")
 
     # Test set predictions
+    data_dir = str(PROJ_DIR / 'test_run_lenti_data')
     test_ds = LentiMPRADataset(
         model=model, cell_type='K562', split='test',
+        path_to_data=data_dir,
         random_shift=False, reverse_complement=False,
     )
     test_loader = MPRADataLoader(test_ds, batch_size=32, shuffle=False)

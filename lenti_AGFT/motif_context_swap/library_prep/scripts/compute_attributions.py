@@ -143,9 +143,9 @@ def process_wt_library(model, organism_index, mut_lib_path, out_path,
         wt_enh = f['wt_sequence'][:]      # (230, 4)
         meta_attrs = dict(f.attrs)
 
-    # Take first n_mutants
-    mutants = all_mutants[:n_mutants]
-    total = n_mutants + 1  # WT + mutants
+    # Take first n_mutants-1 so total (WT + mutants) = n_mutants exactly
+    mutants = all_mutants[:n_mutants - 1]
+    total = n_mutants  # WT at idx 0 + (n_mutants-1) mutants
 
     # Check if already complete
     if out_path.exists():

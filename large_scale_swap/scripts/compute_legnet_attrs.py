@@ -16,6 +16,7 @@ Requires: legnet_env (torch + tangermeme + lightning)
 """
 
 import argparse
+import gc
 import sys
 import time
 import numpy as np
@@ -30,6 +31,7 @@ sys.path.insert(0, str(REPO_ROOT / 'human_legnet'))
 
 from trainer import LitModel, TrainingConfig
 from tangermeme.deep_lift_shap import deep_lift_shap
+from tangermeme.ersatz import dinucleotide_shuffle
 
 # Paths
 ACTIVITY_LIB = REPO_ROOT / "large_scale_swap/data/activity_lib/k562_activity_library.csv"
@@ -52,19 +54,33 @@ class WrappedModel(torch.nn.Module):
         return self.model(x).unsqueeze(-1)
 
 
-def load_models():
-    """Load all 10 models, indexed by test fold (1-indexed: models_by_fold[fold])."""
-    train_cfg = TrainingConfig.from_json(str(CONFIG_PATH))
-    models_by_fold = {}
-    for test_fold in range(1, 11):
-        pattern = str(K562_MODEL_DIR / f'best_model_test{test_fold}_val*.ckpt')
-        cp = sorted(glob.glob(pattern))[0]
-        m = LitModel.load_from_checkpoint(cp, tr_cfg=train_cfg)
-        m.eval()
-        m.model.cuda()
-        models_by_fold[test_fold] = m.model
-    print(f"Loaded {len(models_by_fold)} LegNet models")
-    return models_by_fold
+class ModelLoader:
+    """Lazy model loader — only loads models when needed and keeps them on GPU.
+    In test-fold mode this means only 1-2 models on GPU instead of 10."""
+    def __init__(self):
+        self.train_cfg = TrainingConfig.from_json(str(CONFIG_PATH))
+        self._cache = {}  # fold -> model (on GPU)
+
+    def get(self, fold):
+        if fold not in self._cache:
+            pattern = str(K562_MODEL_DIR / f'best_model_test{fold}_val*.ckpt')
+            cp = sorted(glob.glob(pattern))[0]
+            m = LitModel.load_from_checkpoint(cp, tr_cfg=self.train_cfg)
+            m.eval()
+            m.model.cuda()
+            self._cache[fold] = m.model
+            print(f"  Loaded fold {fold} model (total on GPU: {len(self._cache)})")
+        return self._cache[fold]
+
+    def load_all(self):
+        for fold in range(1, 11):
+            self.get(fold)
+        return self
+
+    def all_models(self):
+        """Return all 10 models in fold order (loads any missing)."""
+        self.load_all()
+        return [self._cache[f] for f in sorted(self._cache)]
 
 
 def compute_predictions(model_list, x_agct, batch_size=512):
@@ -80,7 +96,7 @@ def compute_predictions(model_list, x_agct, batch_size=512):
     return np.mean(ensemble, axis=0).astype(np.float32)
 
 
-def process_sequence(models_by_fold, fold, seq_id, activity_bin,
+def process_sequence(model_loader, fold, seq_id, activity_bin,
                      mut_lib_path, out_path, n_shuffles, use_ensemble):
     with h5py.File(mut_lib_path, 'r') as f:
         x_mut = f['sequences'][:24999]
@@ -88,6 +104,7 @@ def process_sequence(models_by_fold, fold, seq_id, activity_bin,
 
     all_acgt = np.concatenate([wt_seq[np.newaxis], x_mut], axis=0)  # (25000, 230, 4)
     all_agct = all_acgt.transpose(0, 2, 1)[:, CH_SWAP, :]  # (25000, 4, 230)
+    del x_mut, wt_seq, all_acgt  # free ACGT copy early
 
     # Check existing progress
     has_preds = has_attrs = False
@@ -101,11 +118,11 @@ def process_sequence(models_by_fold, fold, seq_id, activity_bin,
     if has_preds and has_attrs:
         return False
 
-    # Select models
+    # Select models (lazy-loaded)
     if use_ensemble:
-        model_list = [models_by_fold[f] for f in sorted(models_by_fold)]
+        model_list = model_loader.all_models()
     else:
-        model_list = [models_by_fold[fold]]
+        model_list = [model_loader.get(fold)]
 
     n_models = len(model_list)
 
@@ -123,26 +140,33 @@ def process_sequence(models_by_fold, fold, seq_id, activity_bin,
     if not has_attrs:
         X = torch.from_numpy(all_agct).float()
 
+        # float64 only needed for ensemble averaging, float32 for single model
+        sum_dtype = np.float64 if n_models > 1 else np.float32
+
         # Load checkpoint if partial progress exists
         if models_done > 0 and out_path.exists():
             with h5py.File(out_path, 'r') as f:
                 if 'attrs_partial' in f:
-                    partial_sum = f['attrs_partial'][:]
+                    partial_sum = f['attrs_partial'][:].astype(sum_dtype)
                     print(f"    resuming attributions from model {models_done+1}/{n_models}...")
                 else:
                     models_done = 0
-                    partial_sum = np.zeros((len(all_agct), 4, 230), dtype=np.float64)
+                    partial_sum = np.zeros((len(all_agct), 4, 230), dtype=sum_dtype)
         else:
-            partial_sum = np.zeros((len(all_agct), 4, 230), dtype=np.float64)
+            partial_sum = np.zeros((len(all_agct), 4, 230), dtype=sum_dtype)
 
         t0 = time.time()
+        print(f"    pre-computing {n_shuffles} dinucleotide shuffles for {len(X)} sequences...")
+        refs = dinucleotide_shuffle(X, n=n_shuffles, random_state=42)  # (N, n_shuffles, 4, 230)
+        print(f"    shuffles done in {(time.time()-t0)/60:.1f}min, starting attributions...")
+
         print(f"    attributions ({n_shuffles} shuffles, {n_models} model{'s' if n_models > 1 else ''})...")
 
         for mi in range(models_done, n_models):
             wrapped = WrappedModel(model_list[mi]).eval()
-            attr = deep_lift_shap(wrapped, X, n_shuffles=n_shuffles, target=0,
-                                  hypothetical=True, batch_size=128,
-                                  device='cuda', random_state=42, verbose=False)
+            attr = deep_lift_shap(wrapped, X, references=refs, target=0,
+                                  hypothetical=True, batch_size=512,
+                                  device='cuda', verbose=False)
             partial_sum += attr.cpu().numpy()
             elapsed = time.time() - t0
             print(f"      model {mi+1}/{n_models} done ({elapsed/60:.1f}min)")
@@ -171,6 +195,12 @@ def process_sequence(models_by_fold, fold, seq_id, activity_bin,
                 del f.attrs['models_done']
 
         print(f"    -> {attrs_acgt.shape} in {(time.time()-t0)/60:.1f}min")
+        del X, refs, partial_sum, avg_attrs, attrs_acgt
+
+    # Free intermediates and GPU cache between sequences
+    del all_agct
+    gc.collect()
+    torch.cuda.empty_cache()
 
     return True
 
@@ -194,7 +224,9 @@ def main():
     mode = "10-fold ensemble" if args.ensemble else "test-fold only"
     print(f"Processing {len(lib_df)} sequences [{args.start}:{end}] ({mode})")
 
-    models_by_fold = load_models()
+    model_loader = ModelLoader()
+    if args.ensemble:
+        model_loader.load_all()  # need all 10 upfront
 
     for i, (_, row) in enumerate(lib_df.iterrows()):
         seq_id = row['seq_id']
@@ -204,7 +236,7 @@ def main():
         out_path = OUT_DIR / f"{activity_bin}_{seq_id}.h5"
 
         print(f"  [{i+1}/{len(lib_df)}] {activity_bin}/{seq_id} (fold={fold})")
-        if not process_sequence(models_by_fold, fold, seq_id, activity_bin,
+        if not process_sequence(model_loader, fold, seq_id, activity_bin,
                                 mut_path, out_path, args.n_shuffles, args.ensemble):
             print(f"    complete, skipping")
 

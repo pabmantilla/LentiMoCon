@@ -29,7 +29,7 @@ ALPHABET = ['A', 'C', 'G', 'T']
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ACTIVITY_LIB = REPO_ROOT / "large_scale_swap/data/activity_lib/k562_activity_library.csv"
 MUT_LIB_DIR = REPO_ROOT / "large_scale_swap/data/mutagenesis_lib"
-ATTR_DIR = REPO_ROOT / "large_scale_swap/data/attributions"
+ATTR_DIR = REPO_ROOT / "large_scale_swap/data/attributions_testfold"
 OUT_DIR = REPO_ROOT / "large_scale_swap/data/foregrounds"
 
 
@@ -40,16 +40,16 @@ def process_sequence(seq_id, activity_bin):
     seq_dir = OUT_DIR / seq_id
     seq_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load mutagenesis library: first 24999 mutants + WT = 25000 total
+    # Load mutagenesis library: WT + 24999 mutants = 25000 total
     with h5py.File(mut_path, 'r') as f:
         x_mut_noWT = f['sequences'][:24999]
         wt_seq = f['wt_sequence'][:]
     x_mut = np.concatenate([wt_seq[np.newaxis], x_mut_noWT], axis=0)  # (25000, 230, 4)
 
-    # Load predictions + attributions (both ACGT, WT at index 0)
+    # Load predictions + attributions (WT at index 0, 25000 total)
     with h5py.File(attr_path, 'r') as f:
-        predictions = f['predictions'][:]     # (25001,)
-        attributions = f['attributions'][:]   # (25001, 230, 4)
+        predictions = f['predictions'][:]     # (25000,)
+        attributions = f['attributions'][:]   # (25000, 230, 4)
 
     # K-means clustering on flattened attribution maps
     clusterer = Clusterer(attributions, gpu=False)

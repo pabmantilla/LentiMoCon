@@ -4,7 +4,7 @@ Fine-tuning generalist genomic models (AlphaGenome, Enformer) on LentiMPRA data 
 
 ## Overview
 
-This project leverages the [LentiMPRA dataset](https://doi.org/10.1101/2023.03.05.531189) (Agarwal et al. 2025), which systematically characterizes transcriptional regulatory elements via massively parallel reporter assays. We fine-tune large pretrained sequence-to-function models by freezing their backbones and training task-specific prediction heads on MPRA readouts, then interpret the learned regulatory logic through in silico mutagenesis and DeepSHAP.
+This project leverages the [LentiMPRA dataset](https://doi.org/10.1101/2023.03.05.531189) (Agarwal et al. 2025), which systematically characterizes transcriptional regulatory elements via massively parallel reporter assays. We fine-tune large pretrained sequence-to-function models by freezing their backbones and training task-specific prediction heads on MPRA readouts, then interpret the learned regulatory logic through in silico mutagenesis and DeepSHAP. We will then swap motif sytnax into different contexts to provide counterfactual evidence that context contains activity specific information.  
 
 ## Repository Structure
 
